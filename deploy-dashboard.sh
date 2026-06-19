@@ -15,7 +15,7 @@ fi
 
 GRAFANA_URL="${GRAFANA_URL:-http://grafana-dev.rdevopsb89.online}"
 GRAFANA_USER="${GRAFANA_USER:-admin}"
-GRAFANA_PASSWORD="${GRAFANA_PASSWORD:-}"
+GRAFANA_PASSWORD="$1"
 FOLDER_UID="${FOLDER_UID:-roboshop}"
 FOLDER_TITLE="${FOLDER_TITLE:-RoboShop}"
 
@@ -25,9 +25,6 @@ if [[ -z "${GRAFANA_PASSWORD}" ]]; then
 fi
 
 AUTH=(-u "${GRAFANA_USER}:${GRAFANA_PASSWORD}")
-
-echo "Generating dashboards ..."
-python3 "${GENERATOR}"
 
 echo "Checking Grafana connectivity at ${GRAFANA_URL} ..."
 curl -sf "${AUTH[@]}" "${GRAFANA_URL}/api/health" >/dev/null
