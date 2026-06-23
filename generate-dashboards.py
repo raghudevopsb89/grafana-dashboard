@@ -1,5 +1,25 @@
 #!/usr/bin/env python3
-"""Generate a clean, focused RoboShop Grafana dashboard."""
+"""Generate a clean, focused RoboShop Grafana dashboard.
+
+Queries are tuned against live Prometheus — each RoboShop service exposes
+metrics with slightly different label conventions:
+
+  job                metric                                path-label  status-label  code-style
+  ---------------    -----------------------------------   ----------  ------------  ----------
+  user, cart         http_requests_total                   route       status_code   full (200)
+  catalogue          http_requests_total                   path        status        full (200)
+  payment            http_requests_total                   handler     status        class (2xx/5xx)
+  ratings            flask_http_request_total              -           status        full
+  orders, shipping   http_server_requests_seconds_count    uri         status        full
+
+Spring Boot (orders, shipping) exposes `_count`/`_sum`/`_max` but NOT the
+histogram bucket — so p95 via histogram_quantile is impossible; we fall back
+to `rate(_sum)/rate(_count)` (mean latency).
+
+Spring Boot also exposes `process_cpu_usage` (gauge, 0..1) instead of the
+Prom-client `process_cpu_seconds_total` counter — CPU saturation chart
+combines both.
+"""
 
 from __future__ import annotations
 
@@ -9,33 +29,52 @@ from pathlib import Path
 DS = {"type": "prometheus", "uid": "prometheus"}
 NS = "roboshop"
 JOBS = "roboshop-user|roboshop-cart|roboshop-catalogue|roboshop-payment|roboshop-ratings|roboshop-orders|roboshop-shipping"
+PROMCLIENT_JOBS = "roboshop-user|roboshop-cart|roboshop-catalogue|roboshop-payment"
+SPRING_JOBS = "roboshop-orders|roboshop-shipping"
 TRAEFIK_JOB = "traefik-metrics"
 TRAEFIK_FRONTEND = 'service=~"roboshop.*frontend.*"'
-NGINX_JOB = f'job=~"roboshop-frontend", namespace="{NS}"'
+NGINX_JOB = f'job="roboshop-frontend", namespace="{NS}"'
+RI = "$__rate_interval"
 
 # Layout constants — balanced panel sizes (24-col grid)
 STAT_W, STAT_H = 4, 4
 CHART_H = 7
 HALF = 12
 
+# ── Traffic: sum req/s per job. Each backend uses a different label for the
+#    scrape endpoint so we split per-job to exclude /metrics traffic cleanly.
 TRAFFIC = f"""sum by (job) (
-  rate(http_requests_total{{job=~"roboshop-user|roboshop-cart|roboshop-catalogue|roboshop-payment", route!="/metrics", handler!="/metrics", namespace="{NS}"}}[5m])
-  or rate(http_server_requests_seconds_count{{job=~"roboshop-orders|roboshop-shipping", uri!~"/actuator.*", namespace="{NS}"}}[5m])
-  or rate(flask_http_request_total{{job="roboshop-ratings", namespace="{NS}"}}[5m])
+  rate(http_requests_total{{job="roboshop-user", route!="/metrics", namespace="{NS}"}}[{RI}])
+  or rate(http_requests_total{{job="roboshop-cart", route!="/metrics", namespace="{NS}"}}[{RI}])
+  or rate(http_requests_total{{job="roboshop-catalogue", path!="/metrics", namespace="{NS}"}}[{RI}])
+  or rate(http_requests_total{{job="roboshop-payment", handler!="/metrics", namespace="{NS}"}}[{RI}])
+  or rate(http_server_requests_seconds_count{{job=~"{SPRING_JOBS}", uri!~"/actuator.*", namespace="{NS}"}}[{RI}])
+  or rate(flask_http_request_total{{job="roboshop-ratings", namespace="{NS}"}}[{RI}])
 )"""
 
+# ── Errors: only 5xx (server errors). Each job uses its own status label.
+#    Payment uses status class ("5xx"); others use full code ("500").
 ERRORS = f"""sum by (job) (
-  rate(http_requests_total{{job=~"roboshop-user|roboshop-cart|roboshop-catalogue", route!="/metrics", status_code!~"2..", namespace="{NS}"}}[5m])
-  or rate(http_requests_total{{job="roboshop-payment", handler!="/metrics", status!~"2..", namespace="{NS}"}}[5m])
-  or rate(http_server_requests_seconds_count{{job=~"roboshop-orders|roboshop-shipping", uri!~"/actuator.*", status=~"5..", namespace="{NS}"}}[5m])
-  or rate(flask_http_request_total{{job="roboshop-ratings", status=~"5..", namespace="{NS}"}}[5m])
+  rate(http_requests_total{{job=~"roboshop-user|roboshop-cart", status_code=~"5..", namespace="{NS}"}}[{RI}])
+  or rate(http_requests_total{{job="roboshop-catalogue", status=~"5..", namespace="{NS}"}}[{RI}])
+  or rate(http_requests_total{{job="roboshop-payment", status="5xx", namespace="{NS}"}}[{RI}])
+  or rate(http_server_requests_seconds_count{{job=~"{SPRING_JOBS}", status=~"5..", namespace="{NS}"}}[{RI}])
+  or rate(flask_http_request_total{{job="roboshop-ratings", status=~"5..", namespace="{NS}"}}[{RI}])
 )"""
 
-LATENCY_P95 = [
-    ("{{job}}", f'histogram_quantile(0.95, sum by (le, job) (rate(http_request_duration_seconds_bucket{{job=~"roboshop-user|roboshop-cart|roboshop-catalogue|roboshop-payment", route!="/metrics", namespace="{NS}"}}[5m])))'),
-    ("{{job}}", f'histogram_quantile(0.95, sum by (le, job) (rate(http_server_requests_seconds_bucket{{job=~"roboshop-orders|roboshop-shipping", uri!~"/actuator.*", namespace="{NS}"}}[5m])))'),
-    ("{{job}}", f'histogram_quantile(0.95, sum by (le, job) (rate(flask_http_request_duration_seconds_bucket{{job="roboshop-ratings", namespace="{NS}"}}[5m])))'),
+# ── Latency p95. Spring Boot (orders, shipping) ships no bucket — use mean.
+LATENCY = [
+    ("{{job}} p95", f'histogram_quantile(0.95, sum by (le, job) (rate(http_request_duration_seconds_bucket{{job=~"{PROMCLIENT_JOBS}", route!="/metrics", namespace="{NS}"}}[{RI}])))'),
+    ("{{job}} p95", f'histogram_quantile(0.95, sum by (le, job) (rate(flask_http_request_duration_seconds_bucket{{job="roboshop-ratings", namespace="{NS}"}}[{RI}])))'),
+    ("{{job}} mean", f'sum by (job) (rate(http_server_requests_seconds_sum{{job=~"{SPRING_JOBS}", uri!~"/actuator.*", namespace="{NS}"}}[{RI}])) / sum by (job) (rate(http_server_requests_seconds_count{{job=~"{SPRING_JOBS}", uri!~"/actuator.*", namespace="{NS}"}}[{RI}]))'),
 ]
+
+# ── CPU saturation. Prom-client services expose a counter; Spring exposes a
+#    0..1 gauge — combine so every service appears in one chart.
+CPU = f"""sum by (job) (
+  rate(process_cpu_seconds_total{{job=~"roboshop-user|roboshop-cart|roboshop-catalogue|roboshop-payment|roboshop-ratings|roboshop-frontend", namespace="{NS}"}}[{RI}])
+  or process_cpu_usage{{job=~"{SPRING_JOBS}", namespace="{NS}"}}
+)"""
 
 OUT = Path(__file__).resolve().parent / "dashboards"
 
@@ -57,12 +96,11 @@ TS_OPTIONS = {
     "tooltip": {"mode": "multi", "sort": "desc"},
 }
 
-# Grafana decimals by unit — req/s shown as whole numbers
+# Small req/s rates (0.05–2 req/s) need decimals to be visible at all.
 UNIT_DECIMALS = {
-    "reqps": 0,
-    "s": 2,
-    "short": 0,
-    "none": 0,
+    "reqps": 2,
+    "s": 3,
+    "percentunit": 2,
 }
 
 
@@ -206,20 +244,20 @@ class Builder:
 
 
 def observability_dashboard() -> dict:
-    b = Builder("roboshop-observability", "RoboShop - Observability", ["roboshop", "observability", "sre"])
+    b = Builder("roboshop-observability", "RoboShop - Golden Signals", ["roboshop", "observability", "sre"])
 
-    b.text("Traefik → Nginx → APIs · Four golden signals at a glance · expand rows for detail")
+    b.text("Traefik → Nginx → APIs · Google SRE four golden signals (traffic, latency, errors, saturation) · expand rows for detail")
 
-    # ── Page 1: KPI strip (always visible) ──────────────────────────
+    # ── KPI strip (always visible) ─────────────────────────────────────
     b.section("Overview")
     row_y = b._y
     kpis = [
         ("Services UP", f'count(up{{job=~"{JOBS}", namespace="{NS}"}} == 1)', "short", [{"color": "red", "value": None}, {"color": "yellow", "value": 5}, {"color": "green", "value": 7}]),
-        ("Ingress RPS", f'sum(rate(traefik_service_requests_total{{job="{TRAEFIK_JOB}", {TRAEFIK_FRONTEND}}}[5m]))', "reqps", None),
+        ("Ingress RPS", f'sum(rate(traefik_service_requests_total{{job="{TRAEFIK_JOB}", {TRAEFIK_FRONTEND}}}[{RI}]))', "reqps", None),
         ("API RPS", f"sum({TRAFFIC.strip()})", "reqps", None),
-        ("Ingress p95", f'histogram_quantile(0.95, sum(rate(traefik_service_request_duration_seconds_bucket{{job="{TRAEFIK_JOB}", {TRAEFIK_FRONTEND}}}[5m])) by (le))', "s", None),
-        ("API Errors/s", f"sum({ERRORS.strip()})", "reqps", [{"color": "green", "value": None}, {"color": "red", "value": 1}]),
-        ("Nginx Conn.", f'nginx_connections_active{{{NGINX_JOB}}}', "short", None),
+        ("Ingress p95", f'histogram_quantile(0.95, sum(rate(traefik_service_request_duration_seconds_bucket{{job="{TRAEFIK_JOB}", {TRAEFIK_FRONTEND}}}[{RI}])) by (le))', "s", None),
+        ("5xx /s", f"sum({ERRORS.strip()})", "reqps", [{"color": "green", "value": None}, {"color": "yellow", "value": 0.05}, {"color": "red", "value": 0.5}]),
+        ("Nginx Conn.", f'sum(nginx_connections_active{{{NGINX_JOB}}})', "short", None),
     ]
     for i, (title, expr, unit, steps) in enumerate(kpis):
         kwargs = {"unit": unit}
@@ -227,26 +265,27 @@ def observability_dashboard() -> dict:
             kwargs["steps"] = steps
         b.add_stat(None, title, expr, x=i * STAT_W, y=row_y, w=STAT_W, **kwargs)
 
-    # ── Page 2: Four golden signals — 2×2 grid ───────────────────────
+    # ── Four golden signals — 2×2 grid ─────────────────────────────────
     b.section("Golden Signals — Microservices")
     b.add_chart(None, "Traffic · req/s by service", TRAFFIC, x=0, w=HALF, unit="reqps")
-    b.add_chart(None, "Latency · p95 by service", LATENCY_P95, x=HALF, w=HALF, unit="s")
-    b.add_chart(None, "Errors · req/s by service", ERRORS, x=0, w=HALF, unit="reqps")
-    b.add_chart(None, "Saturation · CPU cores", f'rate(process_cpu_seconds_total{{job=~"{JOBS}", namespace="{NS}"}}[5m])', x=HALF, w=HALF)
+    b.add_chart(None, "Latency · p95 (orders/shipping = mean)", LATENCY, x=HALF, w=HALF, unit="s")
+    b.add_chart(None, "Errors · 5xx req/s by service", ERRORS, x=0, w=HALF, unit="reqps")
+    b.add_chart(None, "Saturation · CPU (cores | utilization)", CPU, x=HALF, w=HALF, unit="percentunit")
 
-    # ── Collapsed: Ingress layer ─────────────────────────────────────
+    # ── Ingress detail ─────────────────────────────────────────────────
     ingress = b.section("Ingress — Traefik & Nginx", collapsed=True)
-    b.add_stat(ingress, "Traefik RPS", f'sum(rate(traefik_service_requests_total{{job="{TRAEFIK_JOB}", {TRAEFIK_FRONTEND}}}[5m]))', x=0, y=0, w=6, unit="reqps")
-    b.add_stat(ingress, "Traefik p95", f'histogram_quantile(0.95, sum(rate(traefik_service_request_duration_seconds_bucket{{job="{TRAEFIK_JOB}", {TRAEFIK_FRONTEND}}}[5m])) by (le))', x=6, y=0, w=6, unit="s")
-    b.add_stat(ingress, "Traefik 5xx/s", f'sum(rate(traefik_service_requests_total{{job="{TRAEFIK_JOB}", {TRAEFIK_FRONTEND}, code=~"5.."}}[5m]))', x=12, y=0, w=6, unit="reqps", steps=[{"color": "green", "value": None}, {"color": "red", "value": 0.1}])
-    b.add_stat(ingress, "Nginx RPS", f'sum(rate(nginx_http_requests_total{{{NGINX_JOB}}}[5m]))', x=18, y=0, w=6, unit="reqps")
-    b.add_chart(ingress, "Traefik · requests by status", f'sum by (code) (rate(traefik_service_requests_total{{job="{TRAEFIK_JOB}", {TRAEFIK_FRONTEND}}}[5m]))', x=0, y=4, w=HALF, h=6, unit="reqps")
+    b.add_stat(ingress, "Traefik RPS", f'sum(rate(traefik_service_requests_total{{job="{TRAEFIK_JOB}", {TRAEFIK_FRONTEND}}}[{RI}]))', x=0, y=0, w=6, unit="reqps")
+    b.add_stat(ingress, "Traefik p95", f'histogram_quantile(0.95, sum(rate(traefik_service_request_duration_seconds_bucket{{job="{TRAEFIK_JOB}", {TRAEFIK_FRONTEND}}}[{RI}])) by (le))', x=6, y=0, w=6, unit="s")
+    b.add_stat(ingress, "Traefik 5xx/s", f'sum(rate(traefik_service_requests_total{{job="{TRAEFIK_JOB}", {TRAEFIK_FRONTEND}, code=~"5.."}}[{RI}]))', x=12, y=0, w=6, unit="reqps", steps=[{"color": "green", "value": None}, {"color": "yellow", "value": 0.05}, {"color": "red", "value": 0.5}])
+    b.add_stat(ingress, "Nginx RPS", f'sum(rate(nginx_http_requests_total{{{NGINX_JOB}}}[{RI}]))', x=18, y=0, w=6, unit="reqps")
+    b.add_chart(ingress, "Traefik · requests by status code", f'sum by (code) (rate(traefik_service_requests_total{{job="{TRAEFIK_JOB}", {TRAEFIK_FRONTEND}}}[{RI}]))', x=0, y=4, w=HALF, h=6, unit="reqps")
     b.add_chart(
         ingress,
         "Traefik · latency percentiles",
         [
-            ("p50", f'histogram_quantile(0.50, sum(rate(traefik_service_request_duration_seconds_bucket{{job="{TRAEFIK_JOB}", {TRAEFIK_FRONTEND}}}[5m])) by (le))'),
-            ("p95", f'histogram_quantile(0.95, sum(rate(traefik_service_request_duration_seconds_bucket{{job="{TRAEFIK_JOB}", {TRAEFIK_FRONTEND}}}[5m])) by (le))'),
+            ("p50", f'histogram_quantile(0.50, sum(rate(traefik_service_request_duration_seconds_bucket{{job="{TRAEFIK_JOB}", {TRAEFIK_FRONTEND}}}[{RI}])) by (le))'),
+            ("p95", f'histogram_quantile(0.95, sum(rate(traefik_service_request_duration_seconds_bucket{{job="{TRAEFIK_JOB}", {TRAEFIK_FRONTEND}}}[{RI}])) by (le))'),
+            ("p99", f'histogram_quantile(0.99, sum(rate(traefik_service_request_duration_seconds_bucket{{job="{TRAEFIK_JOB}", {TRAEFIK_FRONTEND}}}[{RI}])) by (le))'),
         ],
         x=HALF,
         y=4,
@@ -254,14 +293,14 @@ def observability_dashboard() -> dict:
         h=6,
         unit="s",
     )
-    b.add_chart(ingress, "Nginx · connections", f'nginx_connections_active{{{NGINX_JOB}}}', x=0, y=10, w=HALF, h=6)
+    b.add_chart(ingress, "Nginx · active connections", f'sum(nginx_connections_active{{{NGINX_JOB}}})', x=0, y=10, w=HALF, h=6)
     b.add_chart(
         ingress,
         "Nginx · connection states",
         [
-            ("reading", f'nginx_connections_reading{{{NGINX_JOB}}}'),
-            ("writing", f'nginx_connections_writing{{{NGINX_JOB}}}'),
-            ("waiting", f'nginx_connections_waiting{{{NGINX_JOB}}}'),
+            ("reading", f'sum(nginx_connections_reading{{{NGINX_JOB}}})'),
+            ("writing", f'sum(nginx_connections_writing{{{NGINX_JOB}}})'),
+            ("waiting", f'sum(nginx_connections_waiting{{{NGINX_JOB}}})'),
         ],
         x=HALF,
         y=10,
@@ -269,7 +308,7 @@ def observability_dashboard() -> dict:
         h=6,
     )
 
-    # ── Collapsed: Per-service health ────────────────────────────────
+    # ── Per-service health ─────────────────────────────────────────────
     health = b.section("Service Health", collapsed=True)
     services = ["user", "cart", "catalogue", "payment", "ratings", "orders", "shipping", "frontend"]
     up_steps = [{"color": "red", "value": None}, {"color": "green", "value": 1}]
@@ -277,7 +316,7 @@ def observability_dashboard() -> dict:
         b.add_stat(
             health,
             svc,
-            f'up{{job=~"roboshop-{svc}", namespace="{NS}"}}',
+            f'min(up{{job="roboshop-{svc}", namespace="{NS}"}})',
             x=(i % 4) * 6,
             y=(i // 4) * 3,
             w=6,
@@ -287,12 +326,24 @@ def observability_dashboard() -> dict:
             text_mode="value_and_name",
         )
 
-    # ── Collapsed: Saturation detail ───────────────────────────────
+    # ── Saturation detail ──────────────────────────────────────────────
     sat = b.section("Saturation — Detail", collapsed=True)
     b.add_chart(sat, "Memory RSS by service", f'process_resident_memory_bytes{{job=~"{JOBS}", namespace="{NS}"}}', x=0, y=0, w=HALF, h=6, unit="bytes")
-    b.add_chart(sat, "JVM heap · orders & shipping", f'jvm_memory_used_bytes{{job=~"roboshop-orders|roboshop-shipping", area="heap", namespace="{NS}"}}', x=HALF, y=0, w=HALF, h=6, unit="bytes")
+    b.add_chart(sat, "JVM heap · orders & shipping", f'sum by (job) (jvm_memory_used_bytes{{job=~"{SPRING_JOBS}", area="heap", namespace="{NS}"}})', x=HALF, y=0, w=HALF, h=6, unit="bytes")
     b.add_chart(sat, "Node.js heap · user & cart", f'nodejs_heap_size_used_bytes{{job=~"roboshop-user|roboshop-cart", namespace="{NS}"}}', x=0, y=6, w=HALF, h=6, unit="bytes")
-    b.add_chart(sat, "DB pool · shipping", f'hikaricp_connections_active{{job="roboshop-shipping", namespace="{NS}"}}', x=HALF, y=6, w=HALF, h=6)
+    b.add_chart(
+        sat,
+        "HikariCP pool · shipping",
+        [
+            ("active", f'sum(hikaricp_connections_active{{job="roboshop-shipping", namespace="{NS}"}})'),
+            ("idle", f'sum(hikaricp_connections_idle{{job="roboshop-shipping", namespace="{NS}"}})'),
+            ("pending", f'sum(hikaricp_connections_pending{{job="roboshop-shipping", namespace="{NS}"}})'),
+        ],
+        x=HALF,
+        y=6,
+        w=HALF,
+        h=6,
+    )
 
     return b.build()
 
@@ -302,7 +353,7 @@ def main() -> None:
     path = OUT / "roboshop-observability.json"
     body = observability_dashboard()
     path.write_text(json.dumps(body, indent=2), encoding="utf-8")
-    print(f"Wrote {path} ({len(body['panels'])} sections, clean layout)")
+    print(f"Wrote {path} ({len(body['panels'])} sections)")
 
 
 if __name__ == "__main__":
