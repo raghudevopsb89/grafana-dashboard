@@ -4,19 +4,19 @@
   "metadata": {
     "name": "roboshop-observability",
     "namespace": "default",
-    "uid": "f392ac41-6fc6-440b-9b37-d94dfa13cb9d",
-    "resourceVersion": "1781831333775003",
+    "uid": "4d7dd9c0-9b8e-486d-af1d-b8e0fca68497",
+    "resourceVersion": "1782175370841014",
     "generation": 3,
-    "creationTimestamp": "2026-06-19T00:51:17Z",
+    "creationTimestamp": "2026-06-23T00:40:48Z",
     "labels": {
-      "grafana.app/deprecatedInternalID": "619942500020224"
+      "grafana.app/deprecatedInternalID": "2066856800018432"
     },
     "annotations": {
-      "grafana.app/createdBy": "user:dfpk2s8ei30n4f",
+      "grafana.app/createdBy": "user:dfpyc4ly0aubkf",
       "grafana.app/folder": "roboshop",
       "grafana.app/saved-from-ui": "Grafana v13.0.2 (3fcdbc5a)",
-      "grafana.app/updatedBy": "user:dfpk2s8ei30n4f",
-      "grafana.app/updatedTimestamp": "2026-06-19T01:08:53Z",
+      "grafana.app/updatedBy": "user:dfpyc4ly0aubkf",
+      "grafana.app/updatedTimestamp": "2026-06-23T00:42:50Z",
       "grafana.app/folderTitle": "RoboShop",
       "grafana.app/folderUrl": "/dashboards/f/roboshop/roboshop"
     }
@@ -394,7 +394,7 @@
                       },
                       "spec": {
                         "editorMode": "code",
-                        "expr": "sum by (job) (\n  rate(http_requests_total{job=~\"roboshop-user|roboshop-cart|roboshop-catalogue\", route!=\"/metrics\", status_code!~\"2..\", namespace=\"roboshop\"}[5m])\n  or rate(http_requests_total{job=\"roboshop-payment\", handler!=\"/metrics\", status!~\"2..\", namespace=\"roboshop\"}[5m])\n  or rate(http_server_requests_seconds_count{job=~\"roboshop-orders|roboshop-shipping\", uri!~\"/actuator.*\", status=~\"5..\", namespace=\"roboshop\"}[5m])\n  or rate(flask_http_request_total{job=\"roboshop-ratings\", status=~\"5..\", namespace=\"roboshop\"}[5m])\n)",
+                        "expr": "sum by (job) (\n  rate(http_requests_total{job=~\"roboshop-user|roboshop-cart\", route!=\"/metrics\", status_code!~\"2..\", namespace=\"roboshop\"}[5m])\n  or rate(http_requests_total{job=~\"roboshop-catalogue\", route!=\"/metrics\", status!~\"2..\", namespace=\"roboshop\"}[5m])\n  or rate(http_requests_total{job=\"roboshop-payment\", handler!=\"/metrics\", status!~\"2..\", namespace=\"roboshop\"}[5m])\n  or rate(http_server_requests_seconds_count{job=~\"roboshop-orders|roboshop-shipping\", uri!~\"/actuator.*\", status=~\"5..\", namespace=\"roboshop\"}[5m])\n  or rate(flask_http_request_total{job=\"roboshop-ratings\", status=~\"5..\", namespace=\"roboshop\"}[5m])\n)",
                         "legendFormat": "{{job}}",
                         "range": true
                       }
@@ -3071,7 +3071,9 @@
                         "name": "prometheus"
                       },
                       "spec": {
-                        "expr": "sum(sum by (job) (\n  rate(http_requests_total{job=~\"roboshop-user|roboshop-cart|roboshop-catalogue\", route!=\"/metrics\", status_code!~\"2..\", namespace=\"roboshop\"}[5m])\n  or rate(http_requests_total{job=\"roboshop-payment\", handler!=\"/metrics\", status!~\"2..\", namespace=\"roboshop\"}[5m])\n  or rate(http_server_requests_seconds_count{job=~\"roboshop-orders|roboshop-shipping\", uri!~\"/actuator.*\", status=~\"5..\", namespace=\"roboshop\"}[5m])\n  or rate(flask_http_request_total{job=\"roboshop-ratings\", status=~\"5..\", namespace=\"roboshop\"}[5m])\n))"
+                        "editorMode": "code",
+                        "expr": "sum(sum by (job) (\n  rate(http_requests_total{job=~\"roboshop-user|roboshop-cart\", route!=\"/metrics\", status_code!~\"2..\", namespace=\"roboshop\"}[5m])\n  or rate(http_requests_total{job=~\"roboshop-catalogue\", route!=\"/metrics\", status!~\"2..\", namespace=\"roboshop\"}[5m])\n  or rate(http_requests_total{job=\"roboshop-payment\", handler!=\"/metrics\", status!~\"2..\", namespace=\"roboshop\"}[5m])\n  or rate(http_server_requests_seconds_count{job=~\"roboshop-orders|roboshop-shipping\", uri!~\"/actuator.*\", status=~\"5..\", namespace=\"roboshop\"}[5m])\n  or rate(flask_http_request_total{job=\"roboshop-ratings\", status=~\"5..\", namespace=\"roboshop\"}[5m])\n))",
+                        "range": true
                       }
                     },
                     "refId": "A",
