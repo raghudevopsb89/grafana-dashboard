@@ -248,22 +248,42 @@ def observability_dashboard() -> dict:
 
     b.text("Traefik → Nginx → APIs · Google SRE four golden signals (traffic, latency, errors, saturation) · expand rows for detail")
 
-    # ── KPI strip (always visible) ─────────────────────────────────────
-    b.section("Overview")
-    row_y = b._y
-    kpis = [
+    # ── KPI Row 1 — Ingress (Traefik) + Cluster ────────────────────────
+    b.section("Overview — Ingress (Traefik) & APIs")
+    err_steps = [{"color": "green", "value": None}, {"color": "yellow", "value": 0.05}, {"color": "red", "value": 0.5}]
+    row1_y = b._y
+    row1 = [
         ("Services UP", f'count(up{{job=~"{JOBS}", namespace="{NS}"}} == 1)', "short", [{"color": "red", "value": None}, {"color": "yellow", "value": 5}, {"color": "green", "value": 7}]),
         ("Ingress RPS", f'sum(rate(traefik_service_requests_total{{job="{TRAEFIK_JOB}", {TRAEFIK_FRONTEND}}}[{RI}]))', "reqps", None),
-        ("API RPS", f"sum({TRAFFIC.strip()})", "reqps", None),
         ("Ingress p95", f'histogram_quantile(0.95, sum(rate(traefik_service_request_duration_seconds_bucket{{job="{TRAEFIK_JOB}", {TRAEFIK_FRONTEND}}}[{RI}])) by (le))', "s", None),
-        ("5xx /s", f"sum({ERRORS.strip()})", "reqps", [{"color": "green", "value": None}, {"color": "yellow", "value": 0.05}, {"color": "red", "value": 0.5}]),
-        ("Nginx Conn.", f'sum(nginx_connections_active{{{NGINX_JOB}}})', "short", None),
+        ("Ingress 5xx/s", f'sum(rate(traefik_service_requests_total{{job="{TRAEFIK_JOB}", {TRAEFIK_FRONTEND}, code=~"5.."}}[{RI}]))', "reqps", err_steps),
+        ("API RPS", f"sum({TRAFFIC.strip()})", "reqps", None),
+        ("API 5xx/s", f"sum({ERRORS.strip()})", "reqps", err_steps),
     ]
-    for i, (title, expr, unit, steps) in enumerate(kpis):
+    for i, (title, expr, unit, steps) in enumerate(row1):
         kwargs = {"unit": unit}
         if steps:
             kwargs["steps"] = steps
-        b.add_stat(None, title, expr, x=i * STAT_W, y=row_y, w=STAT_W, **kwargs)
+        b.add_stat(None, title, expr, x=i * STAT_W, y=row1_y, w=STAT_W, **kwargs)
+
+    # ── KPI Row 2 — Frontend (Nginx, stub_status) ──────────────────────
+    # stub_status has no latency histogram or status-code breakdown — we
+    # show RPS, connection states, and TCP accept rate. For p95/5xx we'd
+    # need the VTS module or a log-tailing sidecar.
+    b.section("Overview — Frontend (Nginx)")
+    row2_y = b._y
+    nginx_w = 6  # 4 panels × 6 cols = 24
+    row2 = [
+        ("Nginx RPS", f'sum(rate(nginx_http_requests_total{{{NGINX_JOB}}}[{RI}]))', "reqps", None),
+        ("Nginx Active Conn", f'sum(nginx_connections_active{{{NGINX_JOB}}})', "short", None),
+        ("Nginx In-flight", f'sum(nginx_connections_reading{{{NGINX_JOB}}}) + sum(nginx_connections_writing{{{NGINX_JOB}}})', "short", None),
+        ("Nginx Accepts/s", f'sum(rate(nginx_connections_accepted{{{NGINX_JOB}}}[{RI}]))', "reqps", None),
+    ]
+    for i, (title, expr, unit, steps) in enumerate(row2):
+        kwargs = {"unit": unit}
+        if steps:
+            kwargs["steps"] = steps
+        b.add_stat(None, title, expr, x=i * nginx_w, y=row2_y, w=nginx_w, **kwargs)
 
     # ── Four golden signals — 2×2 grid ─────────────────────────────────
     b.section("Golden Signals — Microservices")

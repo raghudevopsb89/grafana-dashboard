@@ -41,7 +41,7 @@
     {
       "id": 2,
       "type": "row",
-      "title": "Overview",
+      "title": "Overview \u2014 Ingress (Traefik) & APIs",
       "gridPos": {
         "h": 1,
         "w": 24,
@@ -193,77 +193,11 @@
     {
       "id": 5,
       "type": "stat",
-      "title": "API RPS",
-      "gridPos": {
-        "h": 4,
-        "w": 4,
-        "x": 8,
-        "y": 3
-      },
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "sum(sum by (job) (\n  rate(http_requests_total{job=\"roboshop-user\", route!=\"/metrics\", namespace=\"roboshop\"}[$__rate_interval])\n  or rate(http_requests_total{job=\"roboshop-cart\", route!=\"/metrics\", namespace=\"roboshop\"}[$__rate_interval])\n  or rate(http_requests_total{job=\"roboshop-catalogue\", path!=\"/metrics\", namespace=\"roboshop\"}[$__rate_interval])\n  or rate(http_requests_total{job=\"roboshop-payment\", handler!=\"/metrics\", namespace=\"roboshop\"}[$__rate_interval])\n  or rate(http_server_requests_seconds_count{job=~\"roboshop-orders|roboshop-shipping\", uri!~\"/actuator.*\", namespace=\"roboshop\"}[$__rate_interval])\n  or rate(flask_http_request_total{job=\"roboshop-ratings\", namespace=\"roboshop\"}[$__rate_interval])\n))",
-          "refId": "A"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "custom": {
-            "drawStyle": "line",
-            "lineWidth": 1,
-            "fillOpacity": 8,
-            "gradientMode": "opacity",
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "mode": "none"
-            }
-          },
-          "unit": "reqps",
-          "decimals": 2,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ]
-        },
-        "orientation": "auto",
-        "textMode": "value",
-        "colorMode": "value",
-        "graphMode": "none"
-      }
-    },
-    {
-      "id": 6,
-      "type": "stat",
       "title": "Ingress p95",
       "gridPos": {
         "h": 4,
         "w": 4,
-        "x": 12,
+        "x": 8,
         "y": 3
       },
       "datasource": {
@@ -323,13 +257,153 @@
       }
     },
     {
+      "id": 6,
+      "type": "stat",
+      "title": "Ingress 5xx/s",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 12,
+        "y": 3
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(rate(traefik_service_requests_total{job=\"traefik-metrics\", service=~\"roboshop.*frontend.*\", code=~\"5..\"}[$__rate_interval]))",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "gradientMode": "opacity",
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "unit": "reqps",
+          "decimals": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.05
+              },
+              {
+                "color": "red",
+                "value": 0.5
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "orientation": "auto",
+        "textMode": "value",
+        "colorMode": "value",
+        "graphMode": "none"
+      }
+    },
+    {
       "id": 7,
       "type": "stat",
-      "title": "5xx /s",
+      "title": "API RPS",
       "gridPos": {
         "h": 4,
         "w": 4,
         "x": 16,
+        "y": 3
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(sum by (job) (\n  rate(http_requests_total{job=\"roboshop-user\", route!=\"/metrics\", namespace=\"roboshop\"}[$__rate_interval])\n  or rate(http_requests_total{job=\"roboshop-cart\", route!=\"/metrics\", namespace=\"roboshop\"}[$__rate_interval])\n  or rate(http_requests_total{job=\"roboshop-catalogue\", path!=\"/metrics\", namespace=\"roboshop\"}[$__rate_interval])\n  or rate(http_requests_total{job=\"roboshop-payment\", handler!=\"/metrics\", namespace=\"roboshop\"}[$__rate_interval])\n  or rate(http_server_requests_seconds_count{job=~\"roboshop-orders|roboshop-shipping\", uri!~\"/actuator.*\", namespace=\"roboshop\"}[$__rate_interval])\n  or rate(flask_http_request_total{job=\"roboshop-ratings\", namespace=\"roboshop\"}[$__rate_interval])\n))",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "gradientMode": "opacity",
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "unit": "reqps",
+          "decimals": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "orientation": "auto",
+        "textMode": "value",
+        "colorMode": "value",
+        "graphMode": "none"
+      }
+    },
+    {
+      "id": 8,
+      "type": "stat",
+      "title": "API 5xx/s",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
         "y": 3
       },
       "datasource": {
@@ -397,14 +471,93 @@
       }
     },
     {
-      "id": 8,
+      "id": 9,
+      "type": "row",
+      "title": "Overview \u2014 Frontend (Nginx)",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 7
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 10,
       "type": "stat",
-      "title": "Nginx Conn.",
+      "title": "Nginx RPS",
       "gridPos": {
         "h": 4,
-        "w": 4,
-        "x": 20,
-        "y": 3
+        "w": 6,
+        "x": 0,
+        "y": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(rate(nginx_http_requests_total{job=\"roboshop-frontend\", namespace=\"roboshop\"}[$__rate_interval]))",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "gradientMode": "opacity",
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "unit": "reqps",
+          "decimals": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "orientation": "auto",
+        "textMode": "value",
+        "colorMode": "value",
+        "graphMode": "none"
+      }
+    },
+    {
+      "id": 11,
+      "type": "stat",
+      "title": "Nginx Active Conn",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 8
       },
       "datasource": {
         "type": "prometheus",
@@ -462,27 +615,158 @@
       }
     },
     {
-      "id": 9,
+      "id": 12,
+      "type": "stat",
+      "title": "Nginx In-flight",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(nginx_connections_reading{job=\"roboshop-frontend\", namespace=\"roboshop\"}) + sum(nginx_connections_writing{job=\"roboshop-frontend\", namespace=\"roboshop\"})",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "gradientMode": "opacity",
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "orientation": "auto",
+        "textMode": "value",
+        "colorMode": "value",
+        "graphMode": "none"
+      }
+    },
+    {
+      "id": 13,
+      "type": "stat",
+      "title": "Nginx Accepts/s",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(rate(nginx_connections_accepted{job=\"roboshop-frontend\", namespace=\"roboshop\"}[$__rate_interval]))",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "gradientMode": "opacity",
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "unit": "reqps",
+          "decimals": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "orientation": "auto",
+        "textMode": "value",
+        "colorMode": "value",
+        "graphMode": "none"
+      }
+    },
+    {
+      "id": 14,
       "type": "row",
       "title": "Golden Signals \u2014 Microservices",
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 7
+        "y": 12
       },
       "collapsed": false,
       "panels": []
     },
     {
-      "id": 10,
+      "id": 15,
       "type": "timeseries",
       "title": "Traffic \u00b7 req/s by service",
       "gridPos": {
         "h": 7,
         "w": 12,
         "x": 0,
-        "y": 8
+        "y": 13
       },
       "datasource": {
         "type": "prometheus",
@@ -538,14 +822,14 @@
       }
     },
     {
-      "id": 11,
+      "id": 16,
       "type": "timeseries",
       "title": "Latency \u00b7 p95 (orders/shipping = mean)",
       "gridPos": {
         "h": 7,
         "w": 12,
         "x": 12,
-        "y": 15
+        "y": 20
       },
       "datasource": {
         "type": "prometheus",
@@ -623,14 +907,14 @@
       }
     },
     {
-      "id": 12,
+      "id": 17,
       "type": "timeseries",
       "title": "Errors \u00b7 5xx req/s by service",
       "gridPos": {
         "h": 7,
         "w": 12,
         "x": 0,
-        "y": 22
+        "y": 27
       },
       "datasource": {
         "type": "prometheus",
@@ -686,14 +970,14 @@
       }
     },
     {
-      "id": 13,
+      "id": 18,
       "type": "timeseries",
       "title": "Saturation \u00b7 CPU (cores | utilization)",
       "gridPos": {
         "h": 7,
         "w": 12,
         "x": 12,
-        "y": 29
+        "y": 34
       },
       "datasource": {
         "type": "prometheus",
@@ -749,19 +1033,19 @@
       }
     },
     {
-      "id": 14,
+      "id": 19,
       "type": "row",
       "title": "Ingress \u2014 Traefik & Nginx",
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 36
+        "y": 41
       },
       "collapsed": true,
       "panels": [
         {
-          "id": 15,
+          "id": 20,
           "type": "stat",
           "title": "Traefik RPS",
           "gridPos": {
@@ -827,7 +1111,7 @@
           }
         },
         {
-          "id": 16,
+          "id": 21,
           "type": "stat",
           "title": "Traefik p95",
           "gridPos": {
@@ -893,7 +1177,7 @@
           }
         },
         {
-          "id": 17,
+          "id": 22,
           "type": "stat",
           "title": "Traefik 5xx/s",
           "gridPos": {
@@ -967,7 +1251,7 @@
           }
         },
         {
-          "id": 18,
+          "id": 23,
           "type": "stat",
           "title": "Nginx RPS",
           "gridPos": {
@@ -1033,7 +1317,7 @@
           }
         },
         {
-          "id": 19,
+          "id": 24,
           "type": "timeseries",
           "title": "Traefik \u00b7 requests by status code",
           "gridPos": {
@@ -1096,7 +1380,7 @@
           }
         },
         {
-          "id": 20,
+          "id": 25,
           "type": "timeseries",
           "title": "Traefik \u00b7 latency percentiles",
           "gridPos": {
@@ -1181,7 +1465,7 @@
           }
         },
         {
-          "id": 21,
+          "id": 26,
           "type": "timeseries",
           "title": "Nginx \u00b7 active connections",
           "gridPos": {
@@ -1243,7 +1527,7 @@
           }
         },
         {
-          "id": 22,
+          "id": 27,
           "type": "timeseries",
           "title": "Nginx \u00b7 connection states",
           "gridPos": {
@@ -1329,19 +1613,19 @@
       ]
     },
     {
-      "id": 23,
+      "id": 28,
       "type": "row",
       "title": "Service Health",
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 37
+        "y": 42
       },
       "collapsed": true,
       "panels": [
         {
-          "id": 24,
+          "id": 29,
           "type": "stat",
           "title": "user",
           "gridPos": {
@@ -1410,7 +1694,7 @@
           }
         },
         {
-          "id": 25,
+          "id": 30,
           "type": "stat",
           "title": "cart",
           "gridPos": {
@@ -1479,7 +1763,7 @@
           }
         },
         {
-          "id": 26,
+          "id": 31,
           "type": "stat",
           "title": "catalogue",
           "gridPos": {
@@ -1548,7 +1832,7 @@
           }
         },
         {
-          "id": 27,
+          "id": 32,
           "type": "stat",
           "title": "payment",
           "gridPos": {
@@ -1617,7 +1901,7 @@
           }
         },
         {
-          "id": 28,
+          "id": 33,
           "type": "stat",
           "title": "ratings",
           "gridPos": {
@@ -1686,7 +1970,7 @@
           }
         },
         {
-          "id": 29,
+          "id": 34,
           "type": "stat",
           "title": "orders",
           "gridPos": {
@@ -1755,7 +2039,7 @@
           }
         },
         {
-          "id": 30,
+          "id": 35,
           "type": "stat",
           "title": "shipping",
           "gridPos": {
@@ -1824,7 +2108,7 @@
           }
         },
         {
-          "id": 31,
+          "id": 36,
           "type": "stat",
           "title": "frontend",
           "gridPos": {
@@ -1895,19 +2179,19 @@
       ]
     },
     {
-      "id": 32,
+      "id": 37,
       "type": "row",
       "title": "Saturation \u2014 Detail",
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 38
+        "y": 43
       },
       "collapsed": true,
       "panels": [
         {
-          "id": 33,
+          "id": 38,
           "type": "timeseries",
           "title": "Memory RSS by service",
           "gridPos": {
@@ -1969,7 +2253,7 @@
           }
         },
         {
-          "id": 34,
+          "id": 39,
           "type": "timeseries",
           "title": "JVM heap \u00b7 orders & shipping",
           "gridPos": {
@@ -2031,7 +2315,7 @@
           }
         },
         {
-          "id": 35,
+          "id": 40,
           "type": "timeseries",
           "title": "Node.js heap \u00b7 user & cart",
           "gridPos": {
@@ -2093,7 +2377,7 @@
           }
         },
         {
-          "id": 36,
+          "id": 41,
           "type": "timeseries",
           "title": "HikariCP pool \u00b7 shipping",
           "gridPos": {
