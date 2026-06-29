@@ -171,11 +171,13 @@ def field_defaults(unit: str, *, thresholds=None) -> dict:
 # ───────────────────────────────────────────────────────────────────────
 
 class Builder:
-    def __init__(self, uid: str, title: str, tags: list[str]):
+    def __init__(self, uid: str, title: str, tags: list[str],
+                 templating: list[dict] | None = None):
         self.uid = uid
         self.title = title
         self.tags = tags
         self.panels: list[dict] = []
+        self.templating = templating or []
         self._id = 1
         self._y = 0
 
@@ -376,7 +378,7 @@ class Builder:
             "graphTooltip": 1,
             "links": [],
             "annotations": {"list": []},
-            "templating": {"list": []},
+            "templating": {"list": self.templating},
             "panels": self.panels,
         }
 
@@ -830,12 +832,180 @@ def observability_dashboard() -> dict:
     return b.build()
 
 
+# ───────────────────────────────────────────────────────────────────────
+# Per-service resources dashboard
+# ───────────────────────────────────────────────────────────────────────
+# Designed for "give me everything I need to know about ONE service" —
+# pick a service from the dropdown, see its CPU/memory/network/restarts.
+# Independent of the incident dashboard above.
+
+# ReplicaSet hashes are always 5+ hex chars; orphan Job pods (*-db-xxxxx)
+# are exactly 2 chars in the same position — this regex excludes them.
+RS_HASH = "[a-f0-9]{5,}"
+SVC_POD_RE = f"roboshop-$service-{RS_HASH}-[a-z0-9]+"
+
+
+def service_resources_dashboard() -> dict:
+    # Template variable — pick a service from the deployments in the namespace.
+    templating = [{
+        "name": "service",
+        "label": "Service",
+        "type": "query",
+        "datasource": DS,
+        "definition": f'label_values(kube_deployment_spec_replicas{{namespace="{NS}", deployment=~"roboshop-.*"}}, deployment)',
+        "query": {
+            "qryType": 1,
+            "query": f'label_values(kube_deployment_spec_replicas{{namespace="{NS}", deployment=~"roboshop-.*"}}, deployment)',
+            "refId": "PrometheusVariableQueryEditor-VariableQuery",
+        },
+        # Capture group strips the "roboshop-" prefix so the dropdown shows
+        # "user", not "roboshop-user". Queries use "roboshop-$service".
+        "regex": "/^roboshop-(.*)$/",
+        "current": {"selected": False, "text": "user", "value": "user"},
+        "refresh": 1,
+        "sort": 1,
+        "multi": False,
+        "includeAll": False,
+        "hide": 0,
+    }]
+
+    b = Builder("roboshop-service-resources",
+                "RoboShop — Service Resources",
+                ["roboshop", "resources", "per-service"],
+                templating=templating)
+
+    b.text(
+        "**Per-service resources** · pick a service from the **Service** dropdown above. "
+        "Charts show every pod in that service: CPU, memory, network, restart history. "
+        "Use this when you have a hot-spot service and need to know which pod is straining."
+    )
+
+    # ── 1. Overview stats ──────────────────────────────────────────────
+    b.section("Overview — $service")
+    overview_y = b._y
+    overview = [
+        ("Pods Ready",
+         f'sum(kube_deployment_status_replicas_ready{{namespace="{NS}", deployment="roboshop-$service"}})',
+         "short",
+         [{"color": "red", "value": None}, {"color": "yellow", "value": 1}, {"color": "green", "value": 2}]),
+        ("Pods Desired",
+         f'sum(kube_deployment_spec_replicas{{namespace="{NS}", deployment="roboshop-$service"}})',
+         "short", None),
+        ("Restarts 1h",
+         f'sum(increase(kube_pod_container_status_restarts_total{{namespace="{NS}", pod=~"{SVC_POD_RE}"}}[1h])) or vector(0)',
+         "short", INV_STEPS),
+        ("CPU now (cores)",
+         f'sum(rate(container_cpu_usage_seconds_total{{namespace="{NS}", pod=~"{SVC_POD_RE}", container!="", container!="POD"}}[{RI}]))',
+         "short", None),
+        ("Memory now",
+         f'sum(container_memory_working_set_bytes{{namespace="{NS}", pod=~"{SVC_POD_RE}", container!="", container!="POD"}})',
+         "bytes", None),
+        ("Net rx/s",
+         f'sum(rate(container_network_receive_bytes_total{{namespace="{NS}", pod=~"{SVC_POD_RE}"}}[{RI}]))',
+         "Bps", None),
+    ]
+    for i, (title, expr, unit, steps) in enumerate(overview):
+        kwargs = {"unit": unit}
+        if steps:
+            kwargs["steps"] = steps
+        b.add_stat(None, title, expr, x=i * W_STAT, y=overview_y, w=W_STAT, h=H_STAT, **kwargs)
+
+    # ── 2. CPU & Memory ────────────────────────────────────────────────
+    b.section("CPU & Memory — per pod")
+    cm_h = 7
+    cm_y = b._y
+    b.add_chart(None, "CPU usage per pod (cores)",
+                [("{{pod}}",
+                  f'sum by (pod) (rate(container_cpu_usage_seconds_total{{namespace="{NS}", pod=~"{SVC_POD_RE}", container!="", container!="POD"}}[{RI}]))')],
+                x=0, y=cm_y, w=W_HALF, h=cm_h)
+    b.add_chart(None, "Memory working-set per pod",
+                [("{{pod}}",
+                  f'sum by (pod) (container_memory_working_set_bytes{{namespace="{NS}", pod=~"{SVC_POD_RE}", container!="", container!="POD"}})')],
+                x=W_HALF, y=cm_y, w=W_HALF, h=cm_h, unit="bytes")
+
+    # ── 3. Network ─────────────────────────────────────────────────────
+    b.section("Network — per pod")
+    net_y1 = b._y
+    b.add_chart(None, "Network receive bytes/sec",
+                [("{{pod}}",
+                  f'sum by (pod) (rate(container_network_receive_bytes_total{{namespace="{NS}", pod=~"{SVC_POD_RE}"}}[{RI}]))')],
+                x=0, y=net_y1, w=W_HALF, h=cm_h, unit="Bps")
+    b.add_chart(None, "Network transmit bytes/sec",
+                [("{{pod}}",
+                  f'sum by (pod) (rate(container_network_transmit_bytes_total{{namespace="{NS}", pod=~"{SVC_POD_RE}"}}[{RI}]))')],
+                x=W_HALF, y=net_y1, w=W_HALF, h=cm_h, unit="Bps")
+    net_y2 = b._y
+    b.add_chart(None, "Network packets/sec (rx + tx)",
+                [
+                    ("{{pod}} rx",
+                     f'sum by (pod) (rate(container_network_receive_packets_total{{namespace="{NS}", pod=~"{SVC_POD_RE}"}}[{RI}]))'),
+                    ("{{pod}} tx",
+                     f'sum by (pod) (rate(container_network_transmit_packets_total{{namespace="{NS}", pod=~"{SVC_POD_RE}"}}[{RI}]))'),
+                ],
+                x=0, y=net_y2, w=W_HALF, h=cm_h, unit="pps")
+    b.add_chart(None, "Network errors (rx + tx, should be 0)",
+                [
+                    ("{{pod}} rx errs",
+                     f'sum by (pod) (rate(container_network_receive_errors_total{{namespace="{NS}", pod=~"{SVC_POD_RE}"}}[{RI}]))'),
+                    ("{{pod}} tx errs",
+                     f'sum by (pod) (rate(container_network_transmit_errors_total{{namespace="{NS}", pod=~"{SVC_POD_RE}"}}[{RI}]))'),
+                ],
+                x=W_HALF, y=net_y2, w=W_HALF, h=cm_h, unit="short")
+
+    # ── 4. Restarts & Pod state ────────────────────────────────────────
+    b.section("Restarts & Pod state")
+    rs_y = b._y
+    # Bar chart: restart count per interval — easy to spot when crashes happen.
+    b.add_chart(None, "Restart count over time (per interval, bars)",
+                [("{{pod}}",
+                  f'sum by (pod) (increase(kube_pod_container_status_restarts_total{{namespace="{NS}", pod=~"{SVC_POD_RE}"}}[{RI}]))')],
+                x=0, y=rs_y, w=W_HALF, h=cm_h, unit="short",
+                draw_style="bars", stacking=True)
+    # Pod state table: ready, total restarts, last terminated reason — three
+    # instant queries merged by `pod`.
+    b.add_table(None, "Pod state", [
+        ("Ready",
+         f'sum by (pod) (kube_pod_container_status_ready{{namespace="{NS}", pod=~"{SVC_POD_RE}", container!="POD"}})'),
+        ("Restarts (total)",
+         f'sum by (pod) (kube_pod_container_status_restarts_total{{namespace="{NS}", pod=~"{SVC_POD_RE}"}})'),
+        ("Restarts 1h",
+         f'sum by (pod) (increase(kube_pod_container_status_restarts_total{{namespace="{NS}", pod=~"{SVC_POD_RE}"}}[1h]))'),
+        ("Last term reason",
+         f'sum by (pod, reason) (kube_pod_container_status_last_terminated_reason{{namespace="{NS}", pod=~"{SVC_POD_RE}"}} == 1)'),
+    ], x=W_HALF, y=rs_y, w=W_HALF, h=cm_h, join_label="pod")
+
+    # ── 5. Limits vs usage (collapsed by default) ──────────────────────
+    lim = b.section("▼ Limits vs Usage", collapsed=True)
+    b.add_chart(lim, "CPU usage vs limit",
+                [
+                    ("{{pod}} used",
+                     f'sum by (pod) (rate(container_cpu_usage_seconds_total{{namespace="{NS}", pod=~"{SVC_POD_RE}", container!="", container!="POD"}}[{RI}]))'),
+                    ("{{pod}} limit",
+                     f'sum by (pod) (kube_pod_container_resource_limits{{namespace="{NS}", pod=~"{SVC_POD_RE}", resource="cpu", container!=""}})'),
+                ],
+                x=0, y=0, w=W_HALF, h=cm_h, unit="short")
+    b.add_chart(lim, "Memory usage vs limit",
+                [
+                    ("{{pod}} used",
+                     f'sum by (pod) (container_memory_working_set_bytes{{namespace="{NS}", pod=~"{SVC_POD_RE}", container!="", container!="POD"}})'),
+                    ("{{pod}} limit",
+                     f'sum by (pod) (kube_pod_container_resource_limits{{namespace="{NS}", pod=~"{SVC_POD_RE}", resource="memory", container!=""}})'),
+                ],
+                x=W_HALF, y=0, w=W_HALF, h=cm_h, unit="bytes")
+
+    return b.build()
+
+
 def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
-    path = OUT / "roboshop-observability.json"
-    body = observability_dashboard()
-    path.write_text(json.dumps(body, indent=2), encoding="utf-8")
-    print(f"Wrote {path}  ({len(body['panels'])} top-level panels)")
+    for filename, builder in [
+        ("roboshop-observability.json", observability_dashboard),
+        ("roboshop-service-resources.json", service_resources_dashboard),
+    ]:
+        path = OUT / filename
+        body = builder()
+        path.write_text(json.dumps(body, indent=2), encoding="utf-8")
+        print(f"Wrote {path}  ({len(body['panels'])} top-level panels)")
 
 
 if __name__ == "__main__":
